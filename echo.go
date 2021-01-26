@@ -67,8 +67,7 @@ type (
 	// Echo is the top-level framework instance.
 	Echo struct {
 		common
-		// startupMutex is mutex to lock Echo instance access during server configuration and startup. Useful for to get
-		// listener address info (on which interface/port was listener binded) without having data races.
+		// startupMutex是在服务器配置和启动时锁定Echo实例访问的互斥锁。用于在没有数据竞争的情况下获取侦听器地址信息(哪个接口/端口被侦听器绑定)。
 		startupMutex     sync.RWMutex
 		StdLogger        *stdLog.Logger
 		colorer          *color.Color
@@ -97,43 +96,50 @@ type (
 		ListenerNetwork  string
 	}
 
-	// Route contains a handler and information for matching against requests.
+	// Route包含一个处理程序和用于匹配请求的信息。
 	Route struct {
 		Method string `json:"method"`
 		Path   string `json:"path"`
 		Name   string `json:"name"`
 	}
 
-	// HTTPError represents an error that occurred while handling a request.
+	// HTTPError表示在处理请求时发生的错误。
 	HTTPError struct {
 		Code     int         `json:"-"`
 		Message  interface{} `json:"message"`
-		Internal error       `json:"-"` // Stores the error returned by an external dependency
+		Internal error       `json:"-"` // 存储由外部依赖项返回的错误
 	}
 
 	// MiddlewareFunc defines a function to process middleware.
+	// MiddlewareFunc定义了一个处理中间件的函数。
 	MiddlewareFunc func(HandlerFunc) HandlerFunc
 
 	// HandlerFunc defines a function to serve HTTP requests.
+	// HandlerFunc定义了一个用于服务HTTP请求的函数。
 	HandlerFunc func(Context) error
 
 	// HTTPErrorHandler is a centralized HTTP error handler.
+	// HTTPErrorHandler是一个集中式的HTTP错误处理程序。
 	HTTPErrorHandler func(error, Context)
 
 	// Validator is the interface that wraps the Validate function.
+	// Validator是包装Validate函数的接口。
 	Validator interface {
 		Validate(i interface{}) error
 	}
 
 	// Renderer is the interface that wraps the Render function.
+	// Renderer是封装渲染函数的接口。
 	Renderer interface {
 		Render(io.Writer, string, interface{}, Context) error
 	}
 
 	// Map defines a generic map of type `map[string]interface{}`.
+	// Map定义了一个类型为‘Map [string]interface{}’的泛型映射。
 	Map map[string]interface{}
 
 	// Common struct for Echo & Group.
+	// Echo和Group的通用结构体。
 	common struct{}
 )
 
@@ -336,6 +342,7 @@ func New() (e *Echo) {
 }
 
 // NewContext returns a Context instance.
+// //返回一个上下文实例。
 func (e *Echo) NewContext(r *http.Request, w http.ResponseWriter) Context {
 	return &context{
 		request:  r,
@@ -359,6 +366,7 @@ func (e *Echo) Routers() map[string]*Router {
 
 // DefaultHTTPErrorHandler is the default HTTP error handler. It sends a JSON response
 // with status code.
+// DefaultHTTPErrorHandler是默认的HTTP错误处理程序。它发送一个带有状态码的JSON响应
 func (e *Echo) DefaultHTTPErrorHandler(err error, c Context) {
 	he, ok := err.(*HTTPError)
 	if ok {
