@@ -74,7 +74,7 @@ type (
 		colorer          *color.Color
 		premiddleware    []MiddlewareFunc
 		middleware       []MiddlewareFunc
-		maxParam         *int
+		maxParam         *int		// 最大参数
 		router           *Router
 		routers          map[string]*Router
 		notFoundHandler  HandlerFunc
@@ -299,28 +299,38 @@ var (
 )
 
 // New creates an instance of Echo.
+// 具体的获取实例方法
 func New() (e *Echo) {
 	e = &Echo{
-		Server:    new(http.Server),
-		TLSServer: new(http.Server),
+		Server:    new(http.Server), // 创建一个http server 指针
+		TLSServer: new(http.Server), // 创建一个https server 指针
 		AutoTLSManager: autocert.Manager{
 			Prompt: autocert.AcceptTOS,
 		},
+		// 日志实例
 		Logger:          log.New("echo"),
+		// 控制台、日志可以彩色输出的实例
 		colorer:         color.New(),
 		maxParam:        new(int),
 		ListenerNetwork: "tcp",
 	}
+	// http server 绑定实现了server.Handler的实例，也就是说Echo矿建自身实现了http.Handler接口
 	e.Server.Handler = e
-	e.TLSServer.Handler = e
-	e.HTTPErrorHandler = e.DefaultHTTPErrorHandler
+	// https server 绑定实现了server.Hadnler的实例
+	e.TLSServer.Handler = e // 绑定htto服务异常处理的handler
+	e.HTTPErrorHandler = e.DefaultHTTPErrorHandler //
 	e.Binder = &DefaultBinder{}
-	e.Logger.SetLevel(log.ERROR)
-	e.StdLogger = stdLog.New(e.Logger.Output(), e.Logger.Prefix()+": ", 0)
+	e.Logger.SetLevel(log.ERROR) // 设置日志输出级别
+	e.StdLogger = stdLog.New(e.Logger.Output(), e.Logger.Prefix()+": ", 0) // 绑定标准日志输出实例
+	// 绑定获取请求上下文实例的闭包
 	e.pool.New = func() interface{} {
 		return e.NewContext(nil, nil)
 	}
+	// 绑定路由实例
 	e.router = NewRouter(e)
+	// 绑定路由map
+	// 注意这个属性的含义：路由分租用的，key为host，则按host分租
+	// Router.routes存的路由信息（不包含路由的handler)
 	e.routers = map[string]*Router{}
 	return
 }
@@ -529,12 +539,19 @@ func (e *Echo) File(path, file string, m ...MiddlewareFunc) *Route {
 }
 
 func (e *Echo) add(host, method, path string, handler HandlerFunc, middleware ...MiddlewareFunc) *Route {
+	// 获取handler的名称（反射）
 	name := handlerName(handler)
+	// 寻找当前host的路由实例
 	router := e.findRouter(host)
+	// 注册路由
+	// 注意低三个参数是个闭包 匹配到路由就会执行这个闭包
 	router.Add(method, path, func(c Context) error {
+		// 初始化一个handler类型的实例
 		h := applyMiddleware(handler, middleware...)
+		// 执行最后一个中间件
 		return h(c)
 	})
+	// 本次注册进来的路由的信息
 	r := &Route{
 		Method: method,
 		Path:   path,
@@ -622,15 +639,23 @@ func (e *Echo) ReleaseContext(c Context) {
 }
 
 // ServeHTTP implements `http.Handler` interface, which serves HTTP requests.
+// ServeHTTP 实现了 http.Handler接口，该接口用于处理HTTP请求
 func (e *Echo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Acquire context
+	// 获取context，通过使用对象池实现，降低内存申请和消耗造成的性能损失
 	c := e.pool.Get().(*context)
+	// 重置上下文
 	c.Reset(r, w)
+	// 默认handler
 	h := NotFoundHandler
 
+	// 没有请求前，需要调用的http中间件
 	if e.premiddleware == nil {
+		// 先找当前host组的router
+		// LCP算法寻找当前path的handler
 		e.findRouter(r.Host).Find(r.Method, r.URL.EscapedPath(), c)
+		// 找打当前路由的handler
 		h = c.Handler()
+		// 构成中间件链
 		h = applyMiddleware(h, e.middleware...)
 	} else {
 		h = func(c Context) error {
@@ -642,24 +667,27 @@ func (e *Echo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h = applyMiddleware(h, e.premiddleware...)
 	}
 
-	// Execute chain
+	// 执行中间件链
+	// 在applyMiddleware中所有的中间件构成了一个链
 	if err := h(c); err != nil {
 		e.HTTPErrorHandler(err, c)
 	}
 
-	// Release context
+	// 释放context
 	e.pool.Put(c)
 }
 
 // Start starts an HTTP server.
 func (e *Echo) Start(address string) error {
 	e.startupMutex.Lock()
+	// 设置server地址
 	e.Server.Addr = address
 	if err := e.configureServer(e.Server); err != nil {
 		e.startupMutex.Unlock()
 		return err
 	}
 	e.startupMutex.Unlock()
+	// 启动server
 	return e.serve()
 }
 
@@ -966,6 +994,10 @@ func newListener(address, network string) (*tcpKeepAliveListener, error) {
 }
 
 func applyMiddleware(h HandlerFunc, middleware ...MiddlewareFunc) HandlerFunc {
+	// 注意这里的中间件是这个路由专属的
+	// 而Use、Pre注册的中间件是全局公用的
+	// 遍历中间件
+	// 注意返回值类型是HandlerFunc
 	for i := len(middleware) - 1; i >= 0; i-- {
 		h = middleware[i](h)
 	}

@@ -6,22 +6,21 @@ import (
 )
 
 type (
-	// Router is the registry of all registered routes for an `Echo` instance for
-	// request matching and URL path parameter parsing.
+	// Router 是所路由的注册表，用于Echo实例的请求匹配和URL路径参数解析
 	Router struct {
-		tree   *node
-		routes map[string]*Route
+		tree   *node			// 当前节点
+		routes map[string]*Route		// map形式，Route 包含请求handler和匹配信息
 		echo   *Echo
 	}
 	node struct {
-		kind            kind
-		label           byte
-		prefix          string
-		parent          *node
-		staticChildrens children
-		ppath           string
-		pnames          []string
-		methodHandler   *methodHandler
+		kind            kind	// 路由类型 0 静态路由  1 带参数路由  2 全匹配路由
+		label           byte // prefix的第一个字符，根据label和kind来查找子节点
+		prefix          string // 前缀
+		parent          *node // 父节点
+		staticChildrens children // 子节点列表
+		ppath           string // 原始路径
+		pnames          []string // 路径参数（只有当kind为1或者2是才有）
+		methodHandler   *methodHandler // 不同请求类型对应的handler
 		paramChildren   *node
 		anyChildren     *node
 	}
@@ -51,65 +50,78 @@ const (
 	anyLabel   = byte('*')
 )
 
-// NewRouter returns a new Router instance.
+// 初始化一个Router实例
 func NewRouter(e *Echo) *Router {
 	return &Router{
+		// 路由树
+		// 路由的信息（包含路由的handler）
+		// 查找路由用的LCP算法
 		tree: &node{
+			// 节点对应的不同http metthod 的handler
 			methodHandler: new(methodHandler),
 		},
+		// Router.routes存的路由的信息（不包含路由的handler）
 		routes: map[string]*Route{},
+		// 框架实例自身
 		echo:   e,
 	}
 }
 
-// Add registers a new route for method and path with matching handler.
+// Add方法为路由器添加一个新的路径和对应的handler
 func (r *Router) Add(method, path string, h HandlerFunc) {
-	// Validate path
+	// 验证路径合法性
 	if path == "" {
 		path = "/"
 	}
+	// 规范化路径
 	if path[0] != '/' {
 		path = "/" + path
 	}
-	pnames := []string{} // Param names
-	ppath := path        // Pristine path
+	pnames := []string{} // 路径参数
+	ppath := path        // 原始路径
 
 	for i, l := 0, len(path); i < l; i++ {
+		// 参数路径
 		if path[i] == ':' {
 			j := i + 1
 
 			r.insert(method, path[:i], nil, skind, "", nil)
+			// 找到参数路径的参数
 			for ; i < l && path[i] != '/'; i++ {
 			}
-
+			// 把参数路径存入pnames
 			pnames = append(pnames, path[j:i])
+			// 拼接路径，继续查找是否还有参数路径
 			path = path[:j] + path[i:]
 			i, l = j, len(path)
-
+			// 已经结束，插入参数路径节点
 			if i == l {
 				r.insert(method, path[:i], h, pkind, ppath, pnames)
 			} else {
 				r.insert(method, path[:i], nil, pkind, "", nil)
 			}
+			// 全匹配路径
 		} else if path[i] == '*' {
 			r.insert(method, path[:i], nil, skind, "", nil)
+			// 全匹配路径参数都是 *
 			pnames = append(pnames, "*")
 			r.insert(method, path[:i+1], h, akind, ppath, pnames)
 		}
 	}
-
+	// 普通路径
 	r.insert(method, path, h, skind, ppath, pnames)
 }
 
+// 核心函数，构建字典树
 func (r *Router) insert(method, path string, h HandlerFunc, t kind, ppath string, pnames []string) {
-	// Adjust max param
+	// 调整最大参数
 	l := len(pnames)
 	if *r.echo.maxParam < l {
 		*r.echo.maxParam = l
 	}
 
-	cn := r.tree // Current node as root
-	if cn == nil {
+	cn := r.tree // 当前节点root
+	 if cn == nil {
 		panic("echo: invalid method")
 	}
 	search := path
@@ -124,11 +136,12 @@ func (r *Router) insert(method, path string, h HandlerFunc, t kind, ppath string
 		if sl < max {
 			max = sl
 		}
+		// 找到共同前缀的位置 例如users/ 和 users/new 的共同前缀为users/
 		for ; l < max && search[l] == cn.prefix[l]; l++ {
 		}
 
 		if l == 0 {
-			// At root node
+			// root节点处理
 			cn.label = search[0]
 			cn.prefix = search
 			if h != nil {
@@ -138,10 +151,12 @@ func (r *Router) insert(method, path string, h HandlerFunc, t kind, ppath string
 				cn.pnames = pnames
 			}
 		} else if l < pl {
-			// Split node
+
+			// 分离共同前缀 users/和users/new 创建一个prefix为new的节点()
 			n := newNode(cn.kind, cn.prefix[l:], cn, cn.staticChildrens, cn.methodHandler, cn.ppath, cn.pnames, cn.paramChildren, cn.anyChildren)
 
 			// Update parent path for all children to new node
+			// 将当前节点的所有子节点的父改为新的节点new
 			for _, child := range cn.staticChildrens {
 				child.parent = n
 			}
@@ -156,6 +171,7 @@ func (r *Router) insert(method, path string, h HandlerFunc, t kind, ppath string
 			cn.kind = skind
 			cn.label = cn.prefix[0]
 			cn.prefix = cn.prefix[:l]
+			// 清空当前节点的所有子节点
 			cn.staticChildrens = nil
 			cn.methodHandler = new(methodHandler)
 			cn.ppath = ""
@@ -163,7 +179,7 @@ func (r *Router) insert(method, path string, h HandlerFunc, t kind, ppath string
 			cn.paramChildren = nil
 			cn.anyChildren = nil
 
-			// Only Static children could reach here
+			// 将新创建的prefix为new的节点加到当前节点的子节点中
 			cn.addStaticChild(n)
 
 			if l == sl {
@@ -181,13 +197,14 @@ func (r *Router) insert(method, path string, h HandlerFunc, t kind, ppath string
 			}
 		} else if l < sl {
 			search = search[l:]
+			// 找到lable一样的节点，用lable来判断共同前缀
 			c := cn.findChildWithLabel(search[0])
 			if c != nil {
-				// Go deeper
+				// 找到共同节点，继续
 				cn = c
 				continue
 			}
-			// Create child node
+			// 创建子节点
 			n := newNode(t, search, cn, nil, new(methodHandler), ppath, pnames, nil, nil)
 			n.addHandler(method, h)
 			switch t {
@@ -199,7 +216,7 @@ func (r *Router) insert(method, path string, h HandlerFunc, t kind, ppath string
 				cn.anyChildren = n
 			}
 		} else {
-			// Node already exists
+			// 节点已经存在
 			if h != nil {
 				cn.addHandler(method, h)
 				cn.ppath = ppath
@@ -328,22 +345,23 @@ func (n *node) checkMethodNotAllowed() HandlerFunc {
 // - Get context from `Echo#AcquireContext()`
 // - Reset it `Context#Reset()`
 // - Return it `Echo#ReleaseContext()`.
+// 通过method和path查找住的的handler，解析URL参数并把参数放入context
 func (r *Router) Find(method, path string, c Context) {
 	ctx := c.(*context)
 	ctx.path = path
-	cn := r.tree // Current node as root
+	cn := r.tree // 当前节点
 
 	var (
 		search  = path
-		child   *node         // Child node
-		n       int           // Param counter
-		nk      kind          // Next kind
-		nn      *node         // Next node
-		ns      string        // Next search
+		child   *node         // 子节点
+		n       int           // 参数计数器
+		nk      kind          // 下一个节点的kind
+		nn      *node         // 下一个节点
+		ns      string        // 下一个search字串
 		pvalues = ctx.pvalues // Use the internal slice so the interface can keep the illusion of a dynamic slice
 	)
 
-	// Search order static > param > any
+	// 搜索顺序 static > param > any
 	for {
 		if search == "" {
 			break
@@ -361,12 +379,13 @@ func (r *Router) Find(method, path string, c Context) {
 			if sl < max {
 				max = sl
 			}
+			// 找到共同前缀的起始点
 			for ; l < max && search[l] == cn.prefix[l]; l++ {
 			}
 		}
 
 		if l == pl {
-			// Continue search
+			// 重合，继续搜索
 			search = search[l:]
 			// Finish routing if no remaining search and we are on an leaf node
 			if search == "" && (nn == nil || cn.parent == nil || cn.ppath != "") {
@@ -392,7 +411,7 @@ func (r *Router) Find(method, path string, c Context) {
 			}
 		}
 
-		// Static node
+		// Static 节点
 		if child = cn.findStaticChild(search[0]); child != nil {
 			// Save next
 			if cn.prefix[len(cn.prefix)-1] == '/' { // Issue #623
@@ -405,7 +424,7 @@ func (r *Router) Find(method, path string, c Context) {
 		}
 
 	Param:
-		// Param node
+		// Param 节点
 		if child = cn.paramChildren; child != nil {
 			// Issue #378
 			if len(pvalues) == n {
@@ -430,7 +449,7 @@ func (r *Router) Find(method, path string, c Context) {
 		}
 
 	Any:
-		// Any node
+		// Any 节点
 		if cn = cn.anyChildren; cn != nil {
 			// If any node is found, use remaining path for pvalues
 			pvalues[len(cn.pnames)-1] = search
